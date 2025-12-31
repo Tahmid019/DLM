@@ -5,12 +5,17 @@ from model import LLaDA
 from dataset import TextDataset
 from transformers import AutoTokenizer
 from tqdm import tqdm
+from pathlib import Path
+
+CHECKPOINT_DIR = Path("checkpoints")
+CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print("Device: ", device)
 
 tokenizer = AutoTokenizer.from_pretrained("./tokenizer")
 MASK = tokenizer.mask_token_id
+print("Vocab size: ", len(tokenizer))
 
 dataset = TextDataset("data/processed.txt", tokenizer, seq_len=6)
 assert len(dataset) > 0, "Dataset is empty"
