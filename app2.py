@@ -10,13 +10,14 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Using device: {device}")
 
 # Load model and tokenizer
-tokenizer = AutoTokenizer.from_pretrained('./tokenizer', trust_remote_code=True)
-model = AutoModel.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True, 
-                                  torch_dtype=torch.bfloat16).to(device)
+tokenizer = AutoTokenizer.from_pretrained("llada")
+model = AutoModel.from_pretrained("llada").to(device)
+
 
 # Constants
-MASK_TOKEN = "[MASK]"
-MASK_ID = 126336  # The token ID of [MASK] in LLaDA
+MASK_TOKEN = tokenizer.mask_token
+MASK_ID = tokenizer.mask_token_id
+PAD_ID = tokenizer.pad_token_id
 
 def parse_constraints(constraints_text):
     """Parse constraints in format: 'position:word, position:word, ...'"""
@@ -123,8 +124,15 @@ def generate_response_with_visualization(model, tokenizer, device, messages, gen
             processed_constraints[pos + i] = token_id
     
     # Prepare the prompt using chat template
-    chat_input = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
-    input_ids = tokenizer(chat_input)['input_ids']
+    chat_input = ""
+    for m in messages:
+        if m["role"] == "user":
+            chat_input += f"User: {m['content']}\n"
+        else:
+            chat_input += f"Assistant: {m['content']}\n"
+    chat_input += "Assistant:"
+
+    input_ids = tokenizer(chat_input, return_tensors="pt").input_ids.to(device)
     input_ids = torch.tensor(input_ids).to(device).unsqueeze(0)
     
     # For generation
@@ -186,7 +194,7 @@ def generate_response_with_visualization(model, tokenizer, device, messages, gen
         # Process each step
         for i in range(steps_per_block):
             # Get all mask positions in the current sequence
-            mask_index = (x == MASK_ID)
+            mask_index = (x == MASK_ID) & (x != tokenizer.pad_token_id)
             
             # Skip if no masks
             if not mask_index.any():
@@ -197,11 +205,11 @@ def generate_response_with_visualization(model, tokenizer, device, messages, gen
                 un_x = x.clone()
                 un_x[prompt_index] = MASK_ID
                 x_ = torch.cat([x, un_x], dim=0)
-                logits = model(x_).logits
+                logits = model(x_)
                 logits, un_logits = torch.chunk(logits, 2, dim=0)
                 logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
             else:
-                logits = model(x).logits
+                logits = model(x)
             
             # Apply Gumbel noise for sampling
             logits_with_noise = add_gumbel_noise(logits, temperature=temperature)
