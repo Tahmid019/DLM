@@ -28,7 +28,14 @@ loader = DataLoader(dataset, batch_size=8, shuffle=True)
 # --------------------
 # Model
 # --------------------
-config = LLaDAConfig(vocab_size=len(tokenizer))
+config = LLaDAConfig(
+    vocab_size=len(tokenizer),
+    d_model=2048,
+    n_layers=20,
+    n_heads=16,
+    max_position_embeddings=2048,
+)
+
 model = LLaDA(config).to(device)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
