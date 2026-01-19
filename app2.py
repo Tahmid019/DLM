@@ -9,12 +9,10 @@ import re
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Using device: {device}")
 
-# Load model and tokenizer
 tokenizer = AutoTokenizer.from_pretrained("llada")
 model = AutoModel.from_pretrained("llada").to(device)
 
 
-# Constants
 MASK_TOKEN = tokenizer.mask_token
 MASK_ID = tokenizer.mask_token_id
 PAD_ID = tokenizer.pad_token_id
@@ -53,7 +51,7 @@ def format_chat_history(history):
     messages = []
     for user_msg, assistant_msg in history:
         messages.append({"role": "user", "content": user_msg})
-        if assistant_msg:  # Skip if None (for the latest user message)
+        if assistant_msg:  
             messages.append({"role": "assistant", "content": assistant_msg})
     
     return messages
@@ -112,18 +110,15 @@ def generate_response_with_visualization(model, tokenizer, device, messages, gen
         List of visualization states showing the progression and final text
     """
     
-    # Process constraints
     if constraints is None:
         constraints = {}
         
-    # Convert any string constraints to token IDs
     processed_constraints = {}
     for pos, word in constraints.items():
         tokens = tokenizer.encode(" " + word, add_special_tokens=False)
         for i, token_id in enumerate(tokens):
             processed_constraints[pos + i] = token_id
     
-    # Prepare the prompt using chat template
     chat_input = ""
     for m in messages:
         if m["role"] == "user":
@@ -135,72 +130,53 @@ def generate_response_with_visualization(model, tokenizer, device, messages, gen
     input_ids = tokenizer(chat_input, return_tensors="pt").input_ids.to(device)
     input_ids = torch.tensor(input_ids).to(device).unsqueeze(0)
     
-    # For generation
     prompt_length = input_ids.shape[1]
     
-    # Initialize the sequence with masks for the response part
     x = torch.full((1, prompt_length + gen_length), MASK_ID, dtype=torch.long).to(device)
     x[:, :prompt_length] = input_ids.clone()
     
-    # Initialize visualization states for the response part
     visualization_states = []
     
-    # Add initial state (all masked)
     initial_state = [(MASK_TOKEN, "#444444") for _ in range(gen_length)]
     visualization_states.append(initial_state)
     
-    # Apply constraints to the initial state
     for pos, token_id in processed_constraints.items():
         absolute_pos = prompt_length + pos
         if absolute_pos < x.shape[1]:
             x[:, absolute_pos] = token_id
     
-    # Mark prompt positions to exclude them from masking during classifier-free guidance
     prompt_index = (x != MASK_ID)
     
-    # Ensure block_length is valid
     if block_length > gen_length:
         block_length = gen_length
     
-    # Calculate number of blocks
     num_blocks = gen_length // block_length
     if gen_length % block_length != 0:
         num_blocks += 1
     
-    # Adjust steps per block
     steps_per_block = steps // num_blocks
     if steps_per_block < 1:
         steps_per_block = 1
     
-    # Track the current state of x for visualization
     current_x = x.clone()
 
-    # Process each block
     for num_block in range(num_blocks):
-        # Calculate the start and end indices for the current block
         block_start = prompt_length + num_block * block_length
         block_end = min(prompt_length + (num_block + 1) * block_length, x.shape[1])
         
-        # Get mask indices for the current block
         block_mask_index = (x[:, block_start:block_end] == MASK_ID)
         
-        # Skip if no masks in this block
         if not block_mask_index.any():
             continue
         
-        # Calculate number of tokens to unmask at each step
         num_transfer_tokens = get_num_transfer_tokens(block_mask_index, steps_per_block)
         
-        # Process each step
         for i in range(steps_per_block):
-            # Get all mask positions in the current sequence
             mask_index = (x == MASK_ID) & (x != tokenizer.pad_token_id)
             
-            # Skip if no masks
             if not mask_index.any():
                 break
             
-            # Apply classifier-free guidance if enabled
             if cfg_scale > 0.0:
                 un_x = x.clone()
                 un_x[prompt_index] = MASK_ID
@@ -211,11 +187,9 @@ def generate_response_with_visualization(model, tokenizer, device, messages, gen
             else:
                 logits = model(x)
             
-            # Apply Gumbel noise for sampling
             logits_with_noise = add_gumbel_noise(logits, temperature=temperature)
             x0 = torch.argmax(logits_with_noise, dim=-1)
             
-            # Calculate confidence scores for remasking
             if remasking == 'low_confidence':
                 p = F.softmax(logits.to(torch.float64), dim=-1)
                 x0_p = torch.squeeze(
@@ -225,52 +199,40 @@ def generate_response_with_visualization(model, tokenizer, device, messages, gen
             else:
                 raise NotImplementedError(f"Remasking strategy '{remasking}' not implemented")
             
-            # Don't consider positions beyond the current block
             x0_p[:, block_end:] = -float('inf')
             
-            # Apply predictions where we have masks
             old_x = x.clone()
             x0 = torch.where(mask_index, x0, x)
             confidence = torch.where(mask_index, x0_p, -float('inf'))
             
-            # Select tokens to unmask based on confidence
             transfer_index = torch.zeros_like(x0, dtype=torch.bool, device=x0.device)
             for j in range(confidence.shape[0]):
-                # Only consider positions within the current block for unmasking
                 block_confidence = confidence[j, block_start:block_end]
-                if i < steps_per_block - 1:  # Not the last step
-                    # Take top-k confidences
+                if i < steps_per_block - 1:  
                     _, select_indices = torch.topk(block_confidence, 
                                                   k=min(num_transfer_tokens[j, i].item(), 
                                                        block_confidence.numel()))
-                    # Adjust indices to global positions
                     select_indices = select_indices + block_start
                     transfer_index[j, select_indices] = True
-                else:  # Last step - unmask everything remaining
+                else:  
                     transfer_index[j, block_start:block_end] = mask_index[j, block_start:block_end]
             
-            # Apply the selected tokens
             x = torch.where(transfer_index, x0, x)
             
-            # Ensure constraints are maintained
             for pos, token_id in processed_constraints.items():
                 absolute_pos = prompt_length + pos
                 if absolute_pos < x.shape[1]:
                     x[:, absolute_pos] = token_id
             
-            # Create visualization state only for the response part
             current_state = []
             for i in range(gen_length):
-                pos = prompt_length + i  # Absolute position in the sequence
+                pos = prompt_length + i  
                 
                 if x[0, pos] == MASK_ID:
-                    # Still masked
-                    current_state.append((MASK_TOKEN, "#444444"))  # Dark gray for masks
+                    current_state.append((MASK_TOKEN, "#444444")) 
                     
                 elif old_x[0, pos] == MASK_ID:
-                    # Newly revealed in this step
                     token = tokenizer.decode([x[0, pos].item()], skip_special_tokens=True)
-                    # Color based on confidence
                     confidence = float(x0_p[0, pos].cpu())
                     if confidence < 0.3:
                         color = "#FF6666"  # Light red
@@ -282,13 +244,11 @@ def generate_response_with_visualization(model, tokenizer, device, messages, gen
                     current_state.append((token, color))
                     
                 else:
-                    # Previously revealed
                     token = tokenizer.decode([x[0, pos].item()], skip_special_tokens=True)
-                    current_state.append((token, "#6699CC"))  # Light blue
+                    current_state.append((token, "#6699CC")) 
             
             visualization_states.append(current_state)
     
-    # Extract final text (just the assistant's response)
     response_tokens = x[0, prompt_length:]
     final_text = tokenizer.decode(response_tokens, 
                                skip_special_tokens=True,
@@ -305,15 +265,12 @@ def create_chatbot_demo():
         gr.Markdown("# LLaDA - Large Language Diffusion Model Demo")
         gr.Markdown("[model](https://huggingface.co/GSAI-ML/LLaDA-8B-Instruct), [project page](https://ml-gsai.github.io/LLaDA-demo/)")
         
-        # STATE MANAGEMENT
         chat_history = gr.State([])
         
-        # UI COMPONENTS
         with gr.Row():
             with gr.Column(scale=3):
                 chatbot_ui = gr.Chatbot(label="Conversation", height=500)
                 
-                # Message input
                 with gr.Group():
                     with gr.Row():
                         user_input = gr.Textbox(
@@ -372,7 +329,6 @@ def create_chatbot_demo():
                     label="Visualization Delay (seconds)"
                 )
         
-        # Current response text box (hidden)
         current_response = gr.Textbox(
             label="Current Response",
             placeholder="The assistant's response will appear here...",
@@ -380,7 +336,6 @@ def create_chatbot_demo():
             visible=False
         )
         
-        # Clear button
         clear_btn = gr.Button("Clear Conversation")
         
         # HELPER FUNCTIONS
@@ -392,22 +347,16 @@ def create_chatbot_demo():
             
         def user_message_submitted(message, history, gen_length, steps, constraints, delay):
             """Process a submitted user message"""
-            # Skip empty messages
             if not message.strip():
-                # Return current state unchanged
                 history_for_display = history.copy()
                 return history, history_for_display, "", [], ""
                 
-            # Add user message to history
             history = add_message(history, message, None)
             
-            # Format for display - temporarily show user message with empty response
             history_for_display = history.copy()
             
-            # Clear the input
             message_out = ""
             
-            # Return immediately to update UI with user message
             return history, history_for_display, message_out, [], ""
             
         def bot_response(history, gen_length, steps, constraints, delay, temperature, cfg_scale, block_length, remasking):
@@ -415,20 +364,15 @@ def create_chatbot_demo():
             if not history:
                 return history, [], ""
                 
-            # Get the last user message
             last_user_message = history[-1][0]
             
             try:
-                # Format all messages except the last one (which has no response yet)
                 messages = format_chat_history(history[:-1])
                 
-                # Add the last user message
                 messages.append({"role": "user", "content": last_user_message})
                 
-                # Parse constraints
                 parsed_constraints = parse_constraints(constraints)
                 
-                # Generate response with visualization
                 vis_states, response_text = generate_response_with_visualization(
                     model, tokenizer, device, 
                     messages, 
@@ -441,13 +385,10 @@ def create_chatbot_demo():
                     remasking=remasking
                 )
                 
-                # Update history with the assistant's response
                 history[-1][1] = response_text
                 
-                # Return the initial state immediately
                 yield history, vis_states[0], response_text
                 
-                # Then animate through visualization states
                 for state in vis_states[1:]:
                     time.sleep(delay)
                     yield history, state, response_text
@@ -456,42 +397,35 @@ def create_chatbot_demo():
                 error_msg = f"Error: {str(e)}"
                 print(error_msg)
                 
-                # Show error in visualization
                 error_vis = [(error_msg, "red")]
                 
-                # Don't update history with error
                 yield history, error_vis, error_msg
         
         def clear_conversation():
             """Clear the conversation history"""
             return [], [], "", []
         
-        # EVENT HANDLERS
         
-        # Clear button handler
         clear_btn.click(
             fn=clear_conversation,
             inputs=[],
             outputs=[chat_history, chatbot_ui, current_response, output_vis]
         )
         
-        # User message submission flow (2-step process)
-        # Step 1: Add user message to history and update UI
+
         msg_submit = user_input.submit(
             fn=user_message_submitted,
             inputs=[user_input, chat_history, gen_length, steps, constraints_input, visualization_delay],
             outputs=[chat_history, chatbot_ui, user_input, output_vis, current_response]
         )
         
-        # Also connect the send button
         send_click = send_btn.click(
             fn=user_message_submitted,
             inputs=[user_input, chat_history, gen_length, steps, constraints_input, visualization_delay],
             outputs=[chat_history, chatbot_ui, user_input, output_vis, current_response]
         )
         
-        # Step 2: Generate bot response
-        # This happens after the user message is displayed
+
         msg_submit.then(
             fn=bot_response,
             inputs=[
@@ -514,7 +448,6 @@ def create_chatbot_demo():
         
     return demo
 
-# Launch the demo
 if __name__ == "__main__":
     demo = create_chatbot_demo()
     demo.queue().launch(share=True)

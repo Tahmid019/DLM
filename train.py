@@ -90,8 +90,6 @@ for epoch in range(5):
 
     torch.save(model.state_dict(), CHECKPOINT_DIR / "model.pt")
 
-# --------------------
-# Save HF model
-# --------------------
+# ------
 model.save_pretrained("llada")
 tokenizer.save_pretrained("llada")
