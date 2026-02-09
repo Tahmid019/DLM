@@ -20,7 +20,7 @@ folder = snapshot_download(
 ## Working Guid
 1. Create a venv: ``` python -m venv venv ``` , ``` venv\Scripts\activate ```
 2. ```cd setup``` and ```./setup.sh```
-3. Put the training data and ```python data/preprocess.py```
+3. Put the training data and ```pyt```
 4. Train tokenizer: ```python tokenizer.py```
 5. Train LLADA model: ```python train.py```
 6. Eval_1: ``` python sample.py ```
