@@ -2,3 +2,4 @@ tqdm
 dataset
 pyarrow
 datasets
+fastparquet

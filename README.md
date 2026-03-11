@@ -17,12 +17,15 @@ folder = snapshot_download(
 
 1. [Llada-from-Scratch](https://github.com/FredyRivera-dev/LLaDA-from-scratch)
 
+## utils
+1. Avoid fragmentation: ``` export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True```
+
 ## Working Guid
 1. Create a venv: ``` python -m venv venv ``` , ``` venv\Scripts\activate ```
 2. ```cd setup``` and ```./setup.sh```
-3. Put the training data and ```pyt```
+3. Put the training data and ```python prepareData.py```
 4. Train tokenizer: ```python tokenizer.py```
-5. Train LLADA model: ```python train.py```
+5. Train LLADA model: ```CUDA_VISIBLE_DEVICES=1 python train2.py```
 6. Eval_1: ``` python sample.py ```
 7. Eval_2: ``` python eval.py ```
 8. Launch App: ``` python app.py ```

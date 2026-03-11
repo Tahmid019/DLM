@@ -11,7 +11,7 @@ class PrepareData:
     def __init__(
         self,
         tokenizer: str = "GSAI-ML/LLaDA-8B-Instruct",
-        data_dir: str = "../fineweb/sample/10BT",
+        data_dir: str = "/data/sknigam/fineweb_10bt/sample/10BT",
         max_seq_length: int = 4096,
         id_mask_token: int = 126336,
         output_dir: str = "data",
@@ -203,8 +203,8 @@ if __name__ == "__main__":
     force_cpu = os.environ.get("FORCE_CPU", "0") == "1"
     device = torch.device("cpu" if force_cpu or not torch.cuda.is_available() else "cuda")
 
-    data_root = "../fineweb/sample/10BT"
-    output_root = os.path.join(os.path.expanduser("~"), "processedFineweb10BT")
+    data_root = "/data/sknigam/fineweb_10bt/sample/10BT"
+    output_root = "/data/sknigam/fineweb_10bt/processed_data"
     os.makedirs(output_root, exist_ok=True)
 
     preparer = PrepareData(
